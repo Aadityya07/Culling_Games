@@ -1,7 +1,8 @@
 import axios from 'axios';
 
+// Create the axios instance with your live Render backend URL
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: 'https://culling-games-backend.onrender.com/api',
 });
 
 // Automatically attach JWT token to every request
