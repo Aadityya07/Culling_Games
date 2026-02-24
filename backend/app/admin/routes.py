@@ -1,3 +1,6 @@
+import csv
+import io
+from datetime import datetime
 from sqlalchemy import text
 from app.auth.utils import hash_password
 from app.models import TeamPower
@@ -209,57 +212,44 @@ def get_all_teams():
 @admin_bp.route("/team/<int:team_id>", methods=["GET"])
 @role_required("MASTER", "COORDINATOR")
 def get_team_detail(team_id):
-
     team = Team.query.get(team_id)
-
     if not team:
         return jsonify({"error": "Team not found"}), 404
 
     leader = User.query.get(team.leader_id)
-
     coordinator = None
-
     if team.coordinator_id:
         coordinator = User.query.get(team.coordinator_id)
 
-    members = TeamMember.query.filter_by(
-        team_id=team.id
-    ).all()
-
+    members = TeamMember.query.filter_by(team_id=team.id).all()
     members_list = []
-
     for m in members:
         members_list.append({
             "name": m.member_name,
-            "email": m.member_email
+            "email": m.member_email,
+            "academic_year": getattr(m, 'academic_year', ''),
+            "department": getattr(m, 'department', '')
         })
 
     return jsonify({
-
         "team_id": team.id,
-
         "team_name": team.team_name,
-
         "leader": {
-            "name": leader.name,
-            "email": leader.email
+            "name": leader.name if leader else "Unknown",
+            "email": leader.email if leader else "Unknown",
+            "phone": getattr(leader, 'phone', ''),
+            "academic_year": getattr(leader, 'academic_year', ''),
+            "department": getattr(leader, 'department', '')
         },
-
         "coordinator": {
             "name": coordinator.name,
             "email": coordinator.email
         } if coordinator else None,
-
         "members": members_list,
-
         "total_points": team.total_points,
-
         "weekly_points": team.weekly_points,
-
         "week_number": team.week_number,
-
         "is_disqualified": team.is_disqualified
-
     }), 200
 
 
@@ -591,7 +581,7 @@ def admin_create_team():
 
 
 
-# 🔹 MASTER — Change Team Password & Force Logout
+# 🔹 MASTER — Change Team Password & Force Logout (Supports Multiple Unique Passwords)
 @admin_bp.route("/change-team-password", methods=["POST"])
 @role_required("MASTER")
 def change_team_password():
@@ -602,31 +592,213 @@ def change_team_password():
         return jsonify({"error": "ACCESS DENIED: Super Admin privileges required."}), 403
 
     data = request.get_json()
-    team_id = data.get("team_id")
-    new_password = data.get("new_password")
+    updates = data.get("updates", [])
 
-    # ... (Rest of the function stays exactly the same) ...
+    if not updates:
+        return jsonify({"error": "No updates provided."}), 400
 
-    if not team_id or not new_password:
-        return jsonify({"error": "Team ID and new password required"}), 400
-
-    team = Team.query.get(team_id)
-    if not team:
-        return jsonify({"error": "Team not found"}), 404
-
-    leader = User.query.get(team.leader_id)
-    if not leader:
-        return jsonify({"error": "Leader not found"}), 404
-
-    # 1. Securely Hash & Update the new password
-    leader.password_hash = hash_password(new_password)
-
-    # 2. Force Logout: Destroy all active sessions for this team's leader
     from app.models import ActiveSession
-    ActiveSession.query.filter_by(user_id=leader.id).delete()
+    
+    updated_teams = []
+    errors = []
+
+    for update in updates:
+        tid_raw = update.get("team_id")
+        new_password = update.get("new_password")
+        
+        if not tid_raw or not new_password:
+            continue
+            
+        try:
+            tid = int(str(tid_raw).strip())
+        except ValueError:
+            errors.append(f"Invalid ID: {tid_raw}")
+            continue
+
+        team = Team.query.get(tid)
+        if not team:
+            errors.append(f"#{tid} not found")
+            continue
+        
+        leader = User.query.get(team.leader_id)
+        if not leader:
+            errors.append(f"Leader for #{tid} not found")
+            continue
+        
+        # 1. Securely Hash & Update the new password
+        leader.password_hash = hash_password(new_password)
+        
+        # 2. Force Logout: Destroy all active sessions for this team's leader
+        ActiveSession.query.filter_by(user_id=leader.id).delete()
+        updated_teams.append(str(tid))
 
     db.session.commit()
 
+    if not updated_teams:
+        return jsonify({"error": f"No teams updated. Errors: {', '.join(errors)}"}), 400
+
+    msg = f"Passwords successfully changed for Teams: {', '.join(updated_teams)}. Active sessions terminated."
+    if errors:
+        msg += f" (Failed rows: {', '.join(errors)})"
+
+    return jsonify({"message": msg}), 200
+
+
+
+# 🔹 MASTER (Super Admin) — Bulk Register Teams via CSV
+@admin_bp.route("/bulk-register", methods=["POST"])
+@role_required("MASTER")
+def bulk_register_teams():
+    requester_id = int(get_jwt_identity())
+    requester = User.query.get(requester_id)
+    if not requester or requester.email != "uzumakiaditya433@gmail.com":
+        return jsonify({"error": "ACCESS DENIED: Super Admin privileges required."}), 403
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No CSV file uploaded"}), 400
+        
+    file = request.files['file']
+    if not file.filename.endswith('.csv'):
+        return jsonify({"error": "Only CSV files are allowed. Make sure you downloaded the Google Sheet as '.csv'"}), 400
+
+    # ✅ FIX: Safely read and decode the file, handling Excel's weird encodings
+    file_bytes = file.stream.read()
+    
+    try:
+        # Try standard UTF-8 (Google Sheets default)
+        file_content = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            # Fallback for Microsoft Excel default CSV encoding
+            file_content = file_bytes.decode("latin-1")
+        except Exception:
+            return jsonify({"error": "Invalid file encoding. Please ensure it is a valid CSV."}), 400
+            
+    # ✅ FIX: Prevent crashes if someone just renamed an .xlsx to .csv
+    if '\0' in file_content:
+        return jsonify({"error": "This looks like an Excel file renamed to .csv. Please open it in Excel/Sheets and click 'File -> Download -> CSV'."}), 400
+
+    stream = io.StringIO(file_content, newline=None)
+    csv_reader = csv.reader(stream)
+    next(csv_reader, None) # Skip header row safely
+    
+    teams_created = 0
+    errors = []
+
+    for row_num, row in enumerate(csv_reader, start=2):
+        if not row or not row[0].strip():
+            continue 
+
+        try:
+            team_name = row[0].strip()
+            leader_name = row[2].strip()
+            leader_email = row[3].strip()
+            leader_phone = row[4].strip()
+            leader_year = row[5].strip()
+            leader_dept = row[6].strip()
+
+            existing_user = User.query.filter_by(email=leader_email).first()
+            if existing_user:
+                errors.append(f"Row {row_num}: Email {leader_email} already exists. Skipped.")
+                continue
+
+            password = "123456"
+            
+            leader = User(
+                name=leader_name,
+                email=leader_email,
+                phone=leader_phone,
+                academic_year=leader_year,
+                department=leader_dept,
+                password_hash=hash_password(password),
+                role="TEAM"
+            )
+            db.session.add(leader)
+            db.session.flush()
+
+            last_team = Team.query.order_by(Team.id.desc()).first()
+            next_id = last_team.id + 1 if last_team and last_team.id >= 101 else 101
+            
+            team = Team(id=next_id, team_name=team_name, leader_id=leader.id)
+            db.session.add(team)
+            db.session.flush()
+
+            member_ranges = [(7,10), (11,14), (15,18), (19,22)]
+            for start_idx, end_idx in member_ranges:
+                if len(row) > start_idx and row[start_idx].strip():
+                    m_name = row[start_idx].strip()
+                    m_email = row[start_idx+1].strip() if len(row) > start_idx+1 else ""
+                    m_year = row[start_idx+2].strip() if len(row) > start_idx+2 else ""
+                    m_dept = row[start_idx+3].strip() if len(row) > start_idx+3 else ""
+                    
+                    if m_name and m_email:
+                        member = TeamMember(
+                            team_id=team.id,
+                            member_name=m_name,
+                            member_email=m_email,
+                            academic_year=m_year,
+                            department=m_dept
+                        )
+                        db.session.add(member)
+
+            db.session.commit()
+            
+            from app.services.coordinator_assignment_service import assign_coordinator_to_team
+            assign_coordinator_to_team(team.id)
+            
+            teams_created += 1
+
+        except Exception as e:
+            db.session.rollback()
+            errors.append(f"Row {row_num} Failed: {str(e)}")
+
     return jsonify({
-        "message": f"Password for Team #{team.id} ({team.team_name}) changed successfully! Active sessions terminated."
+        "message": f"Successfully registered {teams_created} teams from CSV.",
+        "errors": errors
+    }), 200
+
+
+# 🔹 MASTER (Super Admin) — Export Enriched System Data
+@admin_bp.route("/export-data", methods=["GET"])
+@role_required("MASTER")
+def export_data():
+    requester_id = int(get_jwt_identity())
+    requester = User.query.get(requester_id)
+    
+    if not requester or requester.email != "uzumakiaditya433@gmail.com":
+        return jsonify({"error": "ACCESS DENIED: Super Admin privileges required."}), 403
+
+    teams = Team.query.all()
+    export_data = []
+
+    for team in teams:
+        leader = User.query.get(team.leader_id)
+        members = TeamMember.query.filter_by(team_id=team.id).all()
+        
+        export_data.append({
+            "team_id": team.id,
+            "team_name": team.team_name,
+            "week_number": team.week_number,
+            "total_points": team.total_points,
+            "weekly_points": team.weekly_points,
+            "is_disqualified": team.is_disqualified,
+            "leader": {
+                "name": leader.name if leader else "Unknown",
+                "email": leader.email if leader else "Unknown",
+                "phone": getattr(leader, 'phone', ''),
+                "academic_year": getattr(leader, 'academic_year', ''),
+                "department": getattr(leader, 'department', '')
+            },
+            "members": [{
+                "name": m.member_name,
+                "email": m.member_email,
+                "academic_year": getattr(m, 'academic_year', ''),
+                "department": getattr(m, 'department', '')
+            } for m in members]
+        })
+
+    return jsonify({
+        "export_date": datetime.utcnow().isoformat(),
+        "total_teams": len(export_data),
+        "teams": export_data
     }), 200

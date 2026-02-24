@@ -75,21 +75,12 @@ const Submit = () => {
 
     setIsSubmitting(true);
 
-    let finalTaskId = formData.task_id;
-    if (finalTaskId === 'other') {
-      const genericTask = allFetchedTasks.find(t => 
-        t.name.toLowerCase().includes('personal') || 
-        t.name.toLowerCase().includes('other') ||
-        t.category?.toLowerCase() === 'personal'
-      );
-      if (genericTask) {
-        finalTaskId = genericTask.task_id;
-      }
-    }
-
     try {
       const data = new FormData();
-      data.append('task_id', finalTaskId); 
+      
+      // ✅ FIX: We just send exactly what is selected ('other' or the task ID number). 
+      // The backend is already programmed to handle "other" perfectly!
+      data.append('task_id', formData.task_id); 
       data.append('description', formData.description);
       
       // Only append file if it's an official task

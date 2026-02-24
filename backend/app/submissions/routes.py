@@ -344,3 +344,32 @@ def create_submission():
         "message": "Submission created successfully",
         "file_url": file_url
     }), 201
+
+
+
+
+# 🔹 COORDINATOR — View Personal Verification History
+@submissions_bp.route("/coordinator-history", methods=["GET"])
+@role_required("COORDINATOR")
+def get_coordinator_history():
+    coordinator_id = int(get_jwt_identity())
+    
+    # Fetch submissions verified or rejected by this specific coordinator
+    submissions = Submission.query.filter_by(verified_by=coordinator_id)\
+        .order_by(Submission.created_at.desc()).all()
+    
+    result = []
+    for s in submissions:
+        team = Team.query.get(s.team_id)
+        task = Task.query.get(s.task_id)
+        
+        result.append({
+            "id": s.id,
+            "team_name": team.team_name if team else "Unknown Team",
+            "task_name": task.name if task else "Unknown Task",
+            "points_awarded": s.points_awarded,
+            "status": s.status,
+            "created_at": s.created_at
+        })
+        
+    return jsonify(result), 200

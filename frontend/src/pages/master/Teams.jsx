@@ -1,23 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Button, Loader } from '../../components/ui/Components';
-import { Shield, AlertCircle, RefreshCcw, Eye, Key, Search } from 'lucide-react';
+import { Shield, AlertCircle, RefreshCcw, Eye, Key, Search, Plus, X } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import { Link } from 'react-router-dom';
 import api from '../../utils/api';
-import { useAuth } from '../../context/AuthContext'; // ✅ Added Auth Context
+import { useAuth } from '../../context/AuthContext';
 
 const Teams = () => {
   const { addToast } = useToast();
-  const { user } = useAuth(); // ✅ Get logged in user details
+  const { user } = useAuth(); 
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Password Override States
-  const [searchId, setSearchId] = useState('');
-  const [newPassword, setNewPassword] = useState('');
+  // Dynamic Password Override State
+  const [overrides, setOverrides] = useState([{ id: Date.now(), team_id: '', new_password: '' }]);
   const [isResetting, setIsResetting] = useState(false);
 
-  // ✅ Check if the logged-in user is the Super Admin
   const isSuperAdmin = user?.email === 'uzumakiaditya433@gmail.com';
 
   const fetchTeams = async () => {
@@ -60,27 +58,49 @@ const Teams = () => {
     }
   };
 
-  const foundTeam = teams.find(t => t.team_id === Number(searchId));
+  // Multiple Row Handlers
+  const handleAddRow = () => {
+    setOverrides([...overrides, { id: Date.now(), team_id: '', new_password: '' }]);
+  };
+
+  const handleRemoveRow = (idToRemove) => {
+    if (overrides.length > 1) {
+      setOverrides(overrides.filter(row => row.id !== idToRemove));
+    }
+  };
+
+  const handleOverrideChange = (id, field, value) => {
+    setOverrides(overrides.map(row => (row.id === id ? { ...row, [field]: value } : row)));
+  };
 
   const handlePasswordReset = async (e) => {
     e.preventDefault();
-    if (!foundTeam) return;
-    if (newPassword.length < 6) {
-      addToast("Password must be at least 6 characters.", "error");
+    
+    // Filter out rows that are empty
+    const validUpdates = overrides.filter(row => row.team_id.trim() !== '' && row.new_password.trim() !== '');
+
+    if (validUpdates.length === 0) {
+      addToast("Please fill in at least one Team ID and Password.", "error");
+      return;
+    }
+
+    const tooShort = validUpdates.some(row => row.new_password.length < 6);
+    if (tooShort) {
+      addToast("All new passwords must be at least 6 characters long.", "error");
       return;
     }
 
     setIsResetting(true);
     try {
       const res = await api.post('/admin/change-team-password', {
-        team_id: foundTeam.team_id,
-        new_password: newPassword
+        updates: validUpdates
       });
       addToast(res.data.message, "success");
-      setSearchId('');
-      setNewPassword('');
+      
+      // Reset the form back to one empty row
+      setOverrides([{ id: Date.now(), team_id: '', new_password: '' }]);
     } catch (error) {
-      addToast(error.response?.data?.error || "Failed to reset password", "error");
+      addToast(error.response?.data?.error || "Failed to reset passwords", "error");
     } finally {
       setIsResetting(false);
     }
@@ -95,54 +115,82 @@ const Teams = () => {
       {/* MASTER OVERRIDE: ONLY VISIBLE TO SUPER ADMIN */}
       {isSuperAdmin && (
         <Card className="border-red-900/50 bg-red-950/10 mb-8">
-          <div className="flex items-center gap-2 mb-4 text-red-500 font-bold">
-            <Key size={20} />
-            <h2>Emergency Password Override (Super Admin Only)</h2>
+          <div className="flex justify-between items-center mb-4">
+            <div className="flex items-center gap-2 text-red-500 font-bold">
+              <Key size={20} />
+              <h2>Emergency Password Override (Super Admin Only)</h2>
+            </div>
+            <Button size="sm" variant="secondary" onClick={handleAddRow} className="text-xs flex items-center gap-1">
+              <Plus size={14} /> Add Row
+            </Button>
           </div>
           
-          <form onSubmit={handlePasswordReset} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-            <div className="md:col-span-1">
-              <label className="text-zinc-400 text-xs font-bold mb-1 block">TARGET TEAM ID</label>
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-                <input 
-                  type="number" 
-                  placeholder="e.g. 101"
-                  className="w-full bg-black border border-zinc-700 rounded p-2 pl-9 text-white focus:border-red-500 focus:outline-none"
-                  value={searchId}
-                  onChange={(e) => setSearchId(e.target.value)}
-                />
-              </div>
-            </div>
+          <form onSubmit={handlePasswordReset} className="space-y-3">
+            {overrides.map((row, index) => {
+              const foundTeam = teams.find(t => t.team_id === Number(row.team_id));
+              const isTargetValid = !!foundTeam;
 
-            <div className="md:col-span-1">
-              <label className="text-zinc-400 text-xs font-bold mb-1 block">VERIFIED TARGET</label>
-              <div className={`p-2 rounded border font-bold truncate ${foundTeam ? 'bg-green-900/20 border-green-600 text-green-500' : 'bg-zinc-900 border-zinc-800 text-zinc-600'}`}>
-                {foundTeam ? foundTeam.team_name : 'No Team Found'}
-              </div>
-            </div>
+              return (
+                <div key={row.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end bg-black/40 p-3 rounded border border-zinc-800">
+                  <div className="md:col-span-3">
+                    <label className="text-zinc-500 text-xs font-bold mb-1 block">TARGET TEAM ID</label>
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                      <input 
+                        type="number" 
+                        placeholder="e.g. 101"
+                        className="w-full bg-black border border-zinc-700 rounded p-2 pl-8 text-white text-sm focus:border-red-500 focus:outline-none"
+                        value={row.team_id}
+                        onChange={(e) => handleOverrideChange(row.id, 'team_id', e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
 
-            <div className="md:col-span-1">
-              <label className="text-zinc-400 text-xs font-bold mb-1 block">NEW PASSWORD</label>
-              <input 
-                type="text" 
-                placeholder="Enter new password"
-                className="w-full bg-black border border-zinc-700 rounded p-2 text-white focus:border-red-500 focus:outline-none disabled:opacity-50"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                disabled={!foundTeam}
-                required
-              />
-            </div>
+                  <div className="md:col-span-4">
+                    <label className="text-zinc-500 text-xs font-bold mb-1 block">VERIFIED TARGET</label>
+                    <div className={`p-2 rounded border text-sm font-bold truncate h-[38px] flex items-center ${isTargetValid ? 'bg-green-900/20 border-green-600 text-green-500' : 'bg-zinc-900 border-zinc-800 text-zinc-600'}`}>
+                      {isTargetValid ? foundTeam.team_name : 'No Team Found'}
+                    </div>
+                  </div>
 
-            <div className="md:col-span-1">
+                  <div className="md:col-span-4">
+                    <label className="text-zinc-500 text-xs font-bold mb-1 block">NEW PASSWORD</label>
+                    <input 
+                      type="text" 
+                      placeholder="Enter new password"
+                      className="w-full bg-black border border-zinc-700 rounded p-2 text-white text-sm focus:border-red-500 focus:outline-none disabled:opacity-50 h-[38px]"
+                      value={row.new_password}
+                      onChange={(e) => handleOverrideChange(row.id, 'new_password', e.target.value)}
+                      disabled={!isTargetValid}
+                      required
+                    />
+                  </div>
+
+                  <div className="md:col-span-1 flex justify-end">
+                    {overrides.length > 1 && (
+                      <button 
+                        type="button" 
+                        onClick={() => handleRemoveRow(row.id)}
+                        className="p-2 bg-red-900/30 text-red-500 hover:bg-red-600 hover:text-white rounded transition-colors h-[38px] w-full flex justify-center items-center"
+                        title="Remove Row"
+                      >
+                        <X size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="flex justify-end pt-3">
               <Button 
                 type="submit" 
                 variant="danger" 
-                className="w-full font-bold tracking-wider"
-                disabled={!foundTeam || isResetting}
+                className="font-bold tracking-wider px-8"
+                disabled={isResetting}
               >
-                {isResetting ? 'OVERRIDING...' : 'FORCE CHANGE'}
+                {isResetting ? 'EXECUTING OVERRIDES...' : 'FORCE CHANGE PASSWORDS'}
               </Button>
             </div>
           </form>

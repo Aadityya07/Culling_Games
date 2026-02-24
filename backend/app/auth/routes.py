@@ -92,7 +92,7 @@ def login():
     new_session = ActiveSession(
         user_id=user.id,
         jwt_id=jti,
-        expires_at=datetime.utcnow() + timedelta(hours=2)
+        expires_at=datetime.utcnow() + timedelta(hours=4)
     )
 
     db.session.add(new_session)

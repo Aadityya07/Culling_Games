@@ -37,7 +37,7 @@ const TeamDetail = () => {
       <div className="flex justify-between items-start">
         <div>
             <h1 className="text-3xl font-bold text-white mb-1">{team.team_name}</h1>
-            <p className="text-zinc-500 text-sm">ID: {team.team_id}</p>
+            <p className="text-zinc-500 text-sm font-mono">Team ID: <span className="text-red-500">#{team.team_id}</span></p>
         </div>
         <div className={`px-3 py-1 rounded font-bold text-sm ${team.is_disqualified ? 'bg-red-900/30 text-red-500' : 'bg-green-900/30 text-green-500'}`}>
             {team.is_disqualified ? 'DISQUALIFIED' : 'ACTIVE'}
@@ -59,20 +59,16 @@ const TeamDetail = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card title="Personnel">
             <div className="space-y-4">
-                <div className="flex items-center gap-3 bg-zinc-900 p-3 rounded border border-zinc-800">
-                    <User className="text-red-500" size={20} />
-                    <div>
-                        <p className="text-white font-bold">{team.leader.name} <span className="text-xs text-red-500">(Leader)</span></p>
-                        <p className="text-zinc-500 text-xs">{team.leader.email}</p>
-                    </div>
+                <div className="bg-red-900/10 p-3 rounded border border-red-900/30">
+                    <p className="text-white font-bold mb-1">{team.leader.name} <span className="text-[10px] bg-red-600 text-white px-1.5 py-0.5 rounded ml-2">LEADER</span></p>
+                    <p className="text-zinc-400 text-xs mb-1">{team.leader.email} | {team.leader.phone || 'No Phone'}</p>
+                    <p className="text-zinc-500 text-xs font-mono">{team.leader.academic_year || 'N/A'} - {team.leader.department || 'N/A'}</p>
                 </div>
                 {team.members && team.members.map((m, i) => (
-                    <div key={i} className="flex items-center gap-3 bg-zinc-900 p-3 rounded border border-zinc-800">
-                        <User className="text-zinc-500" size={20} />
-                        <div>
-                            <p className="text-zinc-300">{m.name}</p>
-                            <p className="text-zinc-600 text-xs">{m.email}</p>
-                        </div>
+                    <div key={i} className="bg-zinc-900 p-3 rounded border border-zinc-800">
+                        <p className="text-zinc-300 font-medium mb-1">{m.name}</p>
+                        <p className="text-zinc-500 text-xs mb-1">{m.email}</p>
+                        <p className="text-zinc-600 text-xs font-mono">{m.academic_year || 'N/A'} - {m.department || 'N/A'}</p>
                     </div>
                 ))}
             </div>

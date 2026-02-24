@@ -21,9 +21,10 @@ def create_team():
     if not team_name or not members:
         return jsonify({"error": "Team name and members required"}), 400
 
-    # Must be exactly 4 members (leader + 4 = 5 total)
-    if len(members) != 4:
-        return jsonify({"error": "Team must have exactly 5 members including leader (add 4 members)"}), 400
+    # Must be between 2 and 4 members (leader + 2-4 = 3-5 total)
+    if len(members) < 2 or len(members) > 4:
+        return jsonify({"error": "Team must have between 3 to 5 members total including the leader."}), 400
+    
 
     # Check if leader already has a team
     existing_team = Team.query.filter_by(leader_id=user_id).first()
@@ -76,26 +77,34 @@ def create_team():
 @role_required("TEAM")
 def get_my_team():
     user_id = int(get_jwt_identity())
-
     team = Team.query.filter_by(leader_id=user_id).first()
 
     if not team:
         return jsonify({"error": "No team found for this leader"}), 404
 
+    leader = User.query.get(team.leader_id)
     members = TeamMember.query.filter_by(team_id=team.id).all()
 
     members_list = [
         {
             "name": member.member_name,
-            "email": member.member_email
+            "email": member.member_email,
+            "academic_year": getattr(member, 'academic_year', ''),
+            "department": getattr(member, 'department', '')
         }
         for member in members
     ]
 
     return jsonify({
-        "team_id": team.id,  # Ensure Team ID is sent to the frontend
+        "team_id": team.id,
         "team_name": team.team_name,
-        "leader_id": team.leader_id,
+        "leader": {
+            "name": leader.name,
+            "email": leader.email,
+            "phone": getattr(leader, 'phone', ''),
+            "academic_year": getattr(leader, 'academic_year', ''),
+            "department": getattr(leader, 'department', '')
+        },
         "total_points": team.total_points,
         "weekly_points": team.weekly_points,
         "week_number": team.week_number,
@@ -215,19 +224,32 @@ def full_dashboard():
 # 🔹 PUBLIC — Leaderboard
 @team_bp.route("/leaderboard", methods=["GET"])
 def leaderboard():
+    from app.models import GameState, WeekConfig, User
+    
     teams = Team.query.filter_by(is_disqualified=False)\
         .order_by(Team.total_points.desc()).all()
+
+    # Get current week and weekly cap
+    state = GameState.query.first()
+    current_week = state.current_week if state else 1
+    
+    week_config = WeekConfig.query.filter_by(week_number=current_week).first()
+    weekly_cap = week_config.weekly_cap if week_config else 30
 
     result = []
     rank = 1
 
     for team in teams:
+        leader = User.query.get(team.leader_id)
+        
         result.append({
             "rank": rank,
             "team_id": team.id,
             "team_name": team.team_name,
+            "leader_email": leader.email if leader else "Unknown",
             "total_points": team.total_points,
-            "weekly_points": team.weekly_points
+            "weekly_points": team.weekly_points,
+            "weekly_cap": weekly_cap
         })
         rank += 1
 
